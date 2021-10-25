@@ -1,6 +1,10 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
+def provisioned?(vm_name='robot1', provider='virtualbox')
+    File.exist?(".vagrant/machines/#{vm_name}/#{provider}/action_provision")
+end
+
 # All Vagrant configuration is done below. The "2" in Vagrant.configure
 # configures the configuration version (we support older styles for
 # backwards compatibility). Please don't change it unless you know what
@@ -25,6 +29,11 @@ Vagrant.configure("2") do |config|
     node.vm.hostname = 'robot1.robot.example.com'
     node.vm.network :private_network, ip: '10.142.42.42'
     node.hostmanager.aliases = %w(robot.example.com jx.robot.example.com dashboard-jx.robot.example.com hook-jx.robot.example.com bucketrepo-jx.robot.example.com git.robot.example.com)
+  end
+
+  if provisioned?
+    config.ssh.host = 'robot1.robot.example.com'
+    config.ssh.port = 22
   end
 
   # Disable automatic box update checking. If you disable this, then

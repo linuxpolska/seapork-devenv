@@ -43,6 +43,12 @@ data:
   kubectl apply -f metallb-config.yaml
 fi
 
+if kubectl get node ; then
+  kube_ready=1
+else
+  kube_ready=''
+fi
+
 # install helm
 if [ ! -f /usr/local/bin/helm ] ; then
   curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
@@ -50,15 +56,20 @@ if [ ! -f /usr/local/bin/helm ] ; then
   /tmp/get_helm.sh
 fi
 
-# install nginx-ingress
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm repo update
-helm install home ingress-nginx/ingress-nginx
-kubectl --namespace default get services -o wide home-ingress-nginx-controller
+# install ingress-nginx
+ingress_ready=$(kubectl get pods|grep ingress-nginx|grep Running||:)
+if [ ! -z "$kube_ready" ] && [ -z "$ingress_ready" ] ; then
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+  helm repo update
+  helm install home ingress-nginx/ingress-nginx
+  kubectl --namespace default get services -o wide home-ingress-nginx-controller
+fi
 
 # install gitea
-helm repo add gitea-charts https://dl.gitea.io/charts/
-cat <<. >/tmp/gitea-values.yml
+gitea_ready=$(kubectl get pods -n gitea|grep gitea-0|grep Running||:)
+if [ ! -z "$kube_ready" ] && [ -z "$gitea_ready" ] ; then
+  helm repo add gitea-charts https://dl.gitea.io/charts/
+  cat <<. >/tmp/gitea-values.yml
 ingress:
   hosts:
     - host: ${git_url}
@@ -72,9 +83,9 @@ gitea:
     password: ${gitpass}
     email: "robot1@linuxpolska.pl"
 .
-kubectl create ns gitea
-helm install gitea gitea-charts/gitea -n gitea -f /tmp/gitea-values.yml
-cat <<. >/tmp/gitea-ingress.yml
+  kubectl create ns gitea
+  helm install gitea gitea-charts/gitea -n gitea -f /tmp/gitea-values.yml
+  cat <<. >/tmp/gitea-ingress.yml
 apiVersion: networking.k8s.io/v1beta1
 kind: Ingress
 metadata:
@@ -95,25 +106,30 @@ spec:
               servicePort: 3000
             path: /
 .
-while ! kubectl create -f /tmp/gitea-ingress.yml ; do echo "Ingress not ready yet - will retry..." ; sleep 10 ; done
+  while ! kubectl create -f /tmp/gitea-ingress.yml ; do echo "Ingress not ready yet - will retry..." ; sleep 10 ; done
+fi
 
 # install tea
-curl -sLS https://gitea.com/attachments/bba60977-7066-4376-b232-941855b6015b >/tmp/tea
-chmod a+x /tmp/tea
-install /tmp/tea /usr/local/bin/
-tea login add -u http://${git_url}/ --user ${gitadmin} --password ${gitpass}
+if [ ! -f /usr/local/bin/tea ] ; then
+  curl -sLS https://gitea.com/attachments/bba60977-7066-4376-b232-941855b6015b >/tmp/tea
+  chmod a+x /tmp/tea
+  install /tmp/tea /usr/local/bin/
+  tea login add -u http://${git_url}/ --user ${gitadmin} --password ${gitpass}
+fi
 
 # customize jenkins x
-git clone https://github.com/jx3-gitops-repositories/jx3-kubernetes
-tea repo create --name jx3-kubernetes --branch main --init
-cd jx3-kubernetes/
-git remote remove origin
-git remote add origin http://${gitadmin}:${gitpass}@${git_url}/${gitadmin}/jx3-kubernetes
-perl -pi -e "s/domain: .*/domain: ${robot_url}/" jx-requirements.yml
-git add .
-git commit -m domain
-git push --set-upstream origin main -f
-cd /tmp
+if [ ! -d /tmp/jx3-kubernetes ] ; then
+  git clone https://github.com/jx3-gitops-repositories/jx3-kubernetes
+  tea repo create --name jx3-kubernetes --branch main --init
+  cd jx3-kubernetes/
+  git remote remove origin
+  git remote add origin http://${gitadmin}:${gitpass}@${git_url}/${gitadmin}/jx3-kubernetes
+  perl -pi -e "s/domain: .*/domain: ${robot_url}/" jx-requirements.yml
+  git add .
+  git commit -m domain
+  git push --set-upstream origin main -f
+  cd /tmp
+fi
 
 # install jenkins x
 if [ ! -f /usr/local/bin/jx ] ; then
@@ -122,5 +138,23 @@ if [ ! -f /usr/local/bin/jx ] ; then
   install /tmp/jx /usr/local/bin
 fi
 jx admin operator --url=http://${git_url}/${gitadmin}/jx3-kubernetes --username ${gitadmin} --token ${gitpass}
+jx_pass=$(kubectl get secret jx-basic-auth-user-password -o jsonpath="{.data.password}" -n jx | base64 --decode)
 
+cat <<.
+
+Provision complete.
+
+Jenkins X login:
+
+  URL      : http://dashboard-jx.${robot_url}/
+  Login    : admin
+  Password : ${jx_pass}
+
+Gitea login:
+
+  URL      : http://git.${robot_url}/
+  Login    : ${gitadmin}
+  Password : ${gitpass}
+
+.
 

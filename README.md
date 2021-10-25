@@ -14,8 +14,15 @@ vagrant up
 
 ## Getting in
 
-K3s takes over iptables. Therefore it won't be possible to do ```vagrant ssh``` (it will time out). Luckily we still can connect to public-facing inerface:
+To get into machine:
 
 ```
-ssh -i .vagrant/machines/robot1/virtualbox/private_key vagrant@robot1.robot.example.com
+vagrant ssh
 ```
+
+To re-provision:
+
+```
+vagrant provision
+```
+
