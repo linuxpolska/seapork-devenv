@@ -2,7 +2,7 @@
 
 export robot_url=robot.example.com
 
-export gitadmin=roboadmin
+export gitadmin=robokot
 export gitpass=dupa.8
 export git_url=git.${robot_url}
 
@@ -95,10 +95,10 @@ spec:
               servicePort: 3000
             path: /
 .
-kubectl create -f /tmp/gitea-ingress.yml
+while ! kubectl create -f /tmp/gitea-ingress.yml ; do echo "Ingress not ready yet - will retry..." ; sleep 10 ; done
 
 # install tea
-curl https://gitea.com/attachments/bba60977-7066-4376-b232-941855b6015b >/tmp/tea
+curl -sLS https://gitea.com/attachments/bba60977-7066-4376-b232-941855b6015b >/tmp/tea
 chmod a+x /tmp/tea
 install /tmp/tea /usr/local/bin/
 tea login add -u http://${git_url}/ --user ${gitadmin} --password ${gitpass}
@@ -113,10 +113,11 @@ perl -pi -e "s/domain: .*/domain: ${robot_url}/" jx-requirements.yml
 git add .
 git commit -m domain
 git push --set-upstream origin main -f
+cd /tmp
 
 # install jenkins x
 if [ ! -f /usr/local/bin/jx ] ; then
-  curl -L https://github.com/jenkins-x/jx/releases/download/v3.2.207/jx-linux-amd64.tar.gz | tar xzv
+  curl -sLS https://github.com/jenkins-x/jx/releases/download/v3.2.207/jx-linux-amd64.tar.gz | tar xzv
   chmod +x /tmp/jx
   install /tmp/jx /usr/local/bin
 fi
