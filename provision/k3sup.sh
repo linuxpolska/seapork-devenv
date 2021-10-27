@@ -1,6 +1,7 @@
 #!/bin/bash
 
 export robot_url=robot.example.com
+export public_dns=8.8.8.8
 
 export gitadmin=robokot
 export gitpass=dupa.8
@@ -9,17 +10,67 @@ export git_url=git.${robot_url}
 export metal_secretkey=$(openssl rand -base64 128)
 export metal_range=10.142.42.100-10.142.42.200
 
+function get_url() {
+  i=0
+  while ! curl -sLS -o $2 $1 ; do
+    echo "Fetch failed for $1 -- will retry... ($i)"
+    sleep 10
+    i=$((i+1))
+    if [ $i -gt 10 ] ; then
+      break
+    fi
+  done
+}
+
+function install_url() {
+  o=$(mktemp /tmp/exec_XXXXXX)
+  get_url $1 $o
+  chmod u+x $o
+  $o
+  rm -f $o
+}
+
 set -ex
 
 cd /tmp
 
+# install dnsmasq
+apt update
+apt -y install dnsmasq
+systemctl disable systemd-resolved
+systemctl stop systemd-resolved
+rm -f /etc/resolv.conf
+cat <<. >/etc/resolv.conf
+nameserver 127.0.0.1
+search default.svc.cluster.local svc.cluster.local cluster.local robot.example.com example.com
+.
+cat <<. >/etc/resolv.conf.k3s
+nameserver 10.0.2.15
+search robot.example.com example.com
+.
+cat <<. >/etc/dnsmasq.conf
+port=53
+listen-address=127.0.0.1
+listen-address=10.0.2.15
+expand-hosts
+server=$public_dns
+server=/cluster.local/10.43.0.10
+.
+systemctl enable dnsmasq
+systemctl restart dnsmasq || systemctl start dnsmasq
+
 # install k3sup
-[ -f /usr/local/bin/k3sup ] || curl -sLS https://get.k3sup.dev | sh
+[ -f /usr/local/bin/k3sup ] || install_url https://get.k3sup.dev
 [ -f /tmp/k3sup ] && install /tmp/k3sup /usr/local/bin/
+
+# install arkade
+[ -f /usr/local/bin/arkade ] || install_url https://get.arkade.dev
+arkade get yq
+install /root/.arkade/bin/yq /usr/local/bin/
 
 # install k3s
 if [ ! -f ~/.kube/config ] ; then
-  k3sup install --local --k3s-extra-args '--no-deploy traefik'
+  k3sup install --local --k3s-extra-args '--no-deploy traefik --resolv-conf /etc/resolv.conf.k3s'
   mkdir ~/.kube
   mv /tmp/kubeconfig ~/.kube/config
   kubectl get node
@@ -51,10 +102,36 @@ fi
 
 # install helm
 if [ ! -f /usr/local/bin/helm ] ; then
-  curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-  chmod 700 /tmp/get_helm.sh
-  /tmp/get_helm.sh
+  install_url https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 fi
+
+# install docker
+if [ ! -f /usr/bin/docker ] ; then
+  apt update
+  apt -y install apt-transport-https ca-certificates software-properties-common make
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable"
+  apt update
+  apt -y install docker-ce
+  systemctl enable docker
+  systemctl restart docker || systemctl start docker
+  docker run hello-world
+fi
+
+# install operator sdk
+if [ ! -f /usr/local/bin/operator-sdk ] ; then
+  export ARCH=$(case $(uname -m) in x86_64) echo -n amd64 ;; aarch64) echo -n arm64 ;; *) echo -n $(uname -m) ;; esac)
+  export OS=$(uname | awk '{print tolower($0)}')
+  export OPERATOR_SDK_DL_URL=https://github.com/operator-framework/operator-sdk/releases/download/v1.13.1
+  export CORES=$(cat /proc/cpuinfo |grep cores|tail -1|cut -f2 -d:|tr -d ' ')
+  curl -sLSO ${OPERATOR_SDK_DL_URL}/operator-sdk_${OS}_${ARCH}
+  chmod +x operator-sdk_${OS}_${ARCH} 
+  install operator-sdk_${OS}_${ARCH} /usr/local/bin/operator-sdk
+  [ $CORES -gt 1 ] && operator-sdk olm install
+fi
+
+# install docker registry
+arkade install docker-registry -u ${gitadmin} -p ${gitpass}
 
 # install ingress-nginx
 ingress_ready=$(kubectl get pods|grep ingress-nginx|grep Running||:)
