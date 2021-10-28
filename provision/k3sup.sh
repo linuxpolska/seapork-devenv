@@ -1,11 +1,15 @@
 #!/bin/bash
 
-export robot_url=robot.example.com
+export robot_domain=robot.example.com
 export public_dns=8.8.8.8
 
 export gitadmin=robokot
 export gitpass=dupa.8
-export git_url=git.${robot_url}
+export git_domain=git.${robot_domain}
+
+export regadmin=robokot
+export regpass=dupa.8
+export reg_domain=docker-registry.${robot_domain}
 
 export metal_secretkey=$(openssl rand -base64 128)
 export metal_range=10.142.42.100-10.142.42.200
@@ -40,21 +44,23 @@ apt -y install dnsmasq
 systemctl disable systemd-resolved
 systemctl stop systemd-resolved
 rm -f /etc/resolv.conf
+export top_domain=$(echo "$robot_domain"|sed -e 's/^[^\.]*\.//')
+export kube_domain=cluster.local
 cat <<. >/etc/resolv.conf
 nameserver 127.0.0.1
-search default.svc.cluster.local svc.cluster.local cluster.local robot.example.com example.com
+search default.svc.${kube_domain} svc.${kube_domain} ${kube_domain} ${robot_domain} ${top_domain}
 .
 cat <<. >/etc/resolv.conf.k3s
 nameserver 10.0.2.15
-search robot.example.com example.com
+search ${robot_domain} ${top_domain}
 .
 cat <<. >/etc/dnsmasq.conf
 port=53
 listen-address=127.0.0.1
 listen-address=10.0.2.15
 expand-hosts
-server=$public_dns
-server=/cluster.local/10.43.0.10
+server=${public_dns}
+server=/${kube_domain}/10.43.0.10
 .
 systemctl enable dnsmasq
 systemctl restart dnsmasq || systemctl start dnsmasq
@@ -92,6 +98,22 @@ data:
       - ${metal_range}
 .
   kubectl apply -f metallb-config.yaml
+  cat <<. >/etc/rancher/k3s/registries.yaml
+---
+mirrors:
+  ${reg_domain}:
+    endpoint:
+      - "http://docker-registry.default.svc.cluster.local:5000"
+  "docker-registry.default.svc.cluster.local:5000":
+    endpoint:
+      - "http://docker-registry.default.svc.cluster.local:5000"
+configs:
+  "docker-registry.default.svc.cluster.local:5000":
+    auth:
+      username: ${regadmin}
+      password: ${regpass}
+.
+  systemctl restart k3s
 fi
 
 if kubectl get node ; then
@@ -113,6 +135,9 @@ if [ ! -f /usr/bin/docker ] ; then
   add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable"
   apt update
   apt -y install docker-ce
+  cat <<. >/etc/docker/daemon.json
+{ "insecure-registries": [ "docker-registry.default.svc.cluster.local:5000" ] }
+.
   systemctl enable docker
   systemctl restart docker || systemctl start docker
   docker run hello-world
@@ -131,7 +156,7 @@ if [ ! -f /usr/local/bin/operator-sdk ] ; then
 fi
 
 # install docker registry
-arkade install docker-registry -u ${gitadmin} -p ${gitpass}
+arkade install docker-registry -u ${regadmin} -p ${regpass}
 
 # install ingress-nginx
 ingress_ready=$(kubectl get pods|grep ingress-nginx|grep Running||:)
@@ -149,7 +174,7 @@ if [ ! -z "$kube_ready" ] && [ -z "$gitea_ready" ] ; then
   cat <<. >/tmp/gitea-values.yml
 ingress:
   hosts:
-    - host: ${git_url}
+    - host: ${git_domain}
       paths:
         - path: /
           pathType: Prefix
@@ -175,7 +200,7 @@ metadata:
   namespace: gitea
 spec:
   rules:
-    - host: ${git_url}
+    - host: ${git_domain}
       http:
         paths:
           - backend:
@@ -191,7 +216,7 @@ if [ ! -f /usr/local/bin/tea ] ; then
   curl -sLS https://gitea.com/attachments/bba60977-7066-4376-b232-941855b6015b >/tmp/tea
   chmod a+x /tmp/tea
   install /tmp/tea /usr/local/bin/
-  tea login add -u http://${git_url}/ --user ${gitadmin} --password ${gitpass}
+  tea login add -u http://${git_domain}/ --user ${gitadmin} --password ${gitpass}
 fi
 
 # customize jenkins x
@@ -200,8 +225,8 @@ if [ ! -d /tmp/jx3-kubernetes ] ; then
   tea repo create --name jx3-kubernetes --branch main --init
   cd jx3-kubernetes/
   git remote remove origin
-  git remote add origin http://${gitadmin}:${gitpass}@${git_url}/${gitadmin}/jx3-kubernetes
-  perl -pi -e "s/domain: .*/domain: ${robot_url}/" jx-requirements.yml
+  git remote add origin http://${gitadmin}:${gitpass}@${git_domain}/${gitadmin}/jx3-kubernetes
+  perl -pi -e "s/domain: .*/domain: ${robot_domain}/" jx-requirements.yml
   git add .
   git commit -m domain
   git push --set-upstream origin main -f
@@ -214,7 +239,7 @@ if [ ! -f /usr/local/bin/jx ] ; then
   chmod +x /tmp/jx
   install /tmp/jx /usr/local/bin
 fi
-jx admin operator --url=http://${git_url}/${gitadmin}/jx3-kubernetes --username ${gitadmin} --token ${gitpass}
+jx admin operator --url=http://${git_domain}/${gitadmin}/jx3-kubernetes --username ${gitadmin} --token ${gitpass}
 jx_pass=$(kubectl get secret jx-basic-auth-user-password -o jsonpath="{.data.password}" -n jx | base64 --decode)
 
 cat <<.
@@ -223,15 +248,21 @@ Provision complete.
 
 Jenkins X login:
 
-  URL      : http://dashboard-jx.${robot_url}/
+  URL      : http://dashboard-jx.${robot_domain}/
   Login    : admin
   Password : ${jx_pass}
 
 Gitea login:
 
-  URL      : http://git.${robot_url}/
+  URL      : http://${git_domain}/
   Login    : ${gitadmin}
   Password : ${gitpass}
+
+Registry login:
+
+  URL      : http://${reg_domain}/
+  Login    : ${regadmin}
+  Password : ${regpass}
 
 .
 
