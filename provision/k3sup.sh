@@ -260,7 +260,7 @@ Gitea login:
 
 Registry login:
 
-  URL      : http://${reg_domain}/
+  URL      : docker-registry.default.svc.cluster.local:5000
   Login    : ${regadmin}
   Password : ${regpass}
 
