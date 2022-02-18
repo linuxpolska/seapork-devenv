@@ -28,7 +28,7 @@ Vagrant.configure("2") do |config|
   config.vm.define 'robot1' do |node|
     node.vm.hostname = 'robot1.robot.example.com'
     node.vm.network :private_network, ip: '10.142.42.42'
-    node.hostmanager.aliases = %w(robot.example.com jx.robot.example.com dashboard-jx.robot.example.com hook-jx.robot.example.com bucketrepo-jx.robot.example.com git.robot.example.com)
+    node.hostmanager.aliases = %w(robot.example.com jx.robot.example.com dashboard-jx.robot.example.com hook-jx.robot.example.com bucketrepo-jx.robot.example.com git.robot.example.com sabre.robot.example.com)
   end
 
   if provisioned?
