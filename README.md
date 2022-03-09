@@ -1,13 +1,13 @@
 # devenv
 
-Development environment for Robot Project with Vagrant, K3S and friends.
+Development environment for SeaPork with Vagrant, K3S and friends.
 
 ## Getting started
 
 It takes ~10 minutes to provision a server.
 
 ```
-git clone https://gitlab.com/linux-polska/robot/devenv.git
+git clone https://gitlab.com/linux-polska/robot/seapork-devenv.git
 cd devenv
 vagrant up
 ```
