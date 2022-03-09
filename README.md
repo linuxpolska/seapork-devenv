@@ -1,6 +1,6 @@
 # devenv
 
-Development environment for SeaPork with Vagrant, K3S and friends.
+Development environment for **seapork** with Vagrant, K3S and friends.
 
 ## Getting started
 
